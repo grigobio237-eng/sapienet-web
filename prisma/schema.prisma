@@ -1,0 +1,339 @@
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// 1. User Master
+model User {
+  id           Int           @id @default(autoincrement())
+  loginId      String        @unique
+  passwordHash String
+  userRole     String        // 'BUSINESS_BUYER', 'SUPPLIER', 'ADMIN', 'RETAIL_BUYER'
+  status          String        @default("PENDING") // 'PENDING', 'ACTIVE', 'SUSPENDED'
+  profileImageUrl String?       // 프로필/캐릭터/현장사진 WebP 이미지
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  businessBuyer BusinessBuyer?
+  supplier      Supplier?
+  retailBuyer   RetailBuyer?
+  orders        Order[]       @relation("BuyerOrders")
+  ideas         CoCreationIdea[]
+}
+
+// 2. Business Buyer (식당 점주)
+model BusinessBuyer {
+  id                 Int       @id @default(autoincrement())
+  userId             Int       @unique
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  businessNumber     String    @unique // 사업자등록번호 (10~12자리)
+  companyName        String    // 상호명 (예: 하남돼지집 본점)
+  representativeName String    // 대표자명
+  businessType       String?   // 업태/종목 (예: 한식/육류구이)
+  licenseImgUrl      String?   // 사업자등록증 파일 경로
+  ocrVerifiedAt      DateTime? // 국세청 API 검증 일시
+  storeAddress       String    // 매장 주소
+  createdAt          DateTime  @default(now())
+
+  rfqRequests        RfqRequest[]
+  externalReceipts   ExternalReceipt[]
+  delegatedRules     DelegatedOrderRule[]
+  retailPacks        RetailPackProduct[]
+}
+
+// 3. Wholesale Supplier (도매 공급자)
+model Supplier {
+  id                  Int       @id @default(autoincrement())
+  userId              Int       @unique
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  companyName         String    // 도축/가공/유통 상호명
+  permitNumber        String    // 축산물가공/유통 허가번호
+  haccpCertUrl        String?   // HACCP 인증서 이미지
+  settlementBank      String    // 정산 은행명
+  settlementAccount   String    // 정산 계좌번호
+  legalDisclaimerAgree Boolean   @default(true) // 공급자 법적책임 동의 여부
+  createdAt           DateTime  @default(now())
+
+  products            Product[]
+  rfqProposals        RfqProposal[]
+  orders              Order[]   @relation("SupplierOrders")
+}
+
+// 4. Retail Buyer (개인 소매 구매자)
+model RetailBuyer {
+  id           Int      @id @default(autoincrement())
+  userId       Int      @unique
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  realName     String   // 본인인증 실명
+  phoneNumber  String   // 휴대폰 번호
+  ciDiHash     String   @unique
+  pointBalance Int      @default(0)
+  createdAt    DateTime @default(now())
+}
+
+// 5. Product Master
+model Product {
+  id                 Int      @id @default(autoincrement())
+  supplierId         Int
+  supplier           Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  categoryCode       String   // 'BEEF_RIBS', 'PORK_BELLY' 등
+  productName        String   // 상품명 (예: 국내산 한돈 삼겹살 원박스)
+  brandName          String?  // 브랜드/가공장 (예: 도드람한돈, 안성마춤한우, 목우촌)
+  origin             String   // 원산지 (국내산, 호주산, 미국산)
+  storageType        String   // 'REFRIGERATED', 'FROZEN'
+  imageUrl           String?  // 대표 실물 사진 (WebP)
+  photoGallery       String?  // 현장 실물/단면/계량표 WebP 사진들 JSON 배열
+  trimSpec           String?  // 가공/지방 정선 스펙 (예: 떡지방 90% 제거, 스킨팩 진공, 근간지방 정선)
+  isActive           Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  specs              ProductSpec[]
+  traceability       MeatTraceability?
+  inventory          Inventory?
+  delegatedRules     DelegatedOrderRule[]
+}
+
+// 6. Product Specs (원박스/세절/소포장 규격)
+model ProductSpec {
+  id                 Int      @id @default(autoincrement())
+  productId          Int
+  product            Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  targetAudience     String   // 'B2B_WHOLESALE', 'B2C_RETAIL', 'B2C_GIFT'
+  specName           String   // '원박스 약 20kg', '구이용 세절 1kg'
+  stdWeightKg        Float    // 기준 중량 (예: 20.0)
+  basePricePerKg     Int      // kg당 기준 단가 (원/kg)
+  estimatedPackPrice Int      // 예상 박스/팩당 결제금액
+  weightTolerancePct Float    @default(5.0) // 계량 허용 오차 범위 (±5%)
+
+  orderItems         OrderItem[]
+}
+
+// 7. Meat Traceability (축산물 이력/품질 스펙)
+model MeatTraceability {
+  id                 Int      @id @default(autoincrement())
+  productId          Int      @unique
+  product            Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  traceNumber        String   // 축산물 이력추적번호 12자리
+  bmsGrade           String?  // 한우 BMS 등급 (1~9번) 또는 한돈 1+ 등급
+  slaughterHouseName String?  // 도축장명 (예: 농협음성공판장, 부경축판장)
+  slaughterDate      DateTime // 도축일자
+  processingDate     DateTime // 가공일자
+  ekapeApiJson       String?  // 축평원 API 응답 원본 JSON
+}
+
+// 8. Inventory
+model Inventory {
+  id                 Int      @id @default(autoincrement())
+  productId          Int      @unique
+  product        Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  stockBoxes     Int      @default(0)
+  alertThreshold Int      @default(5)
+  updatedAt      DateTime @updatedAt
+}
+
+// 9. Orders
+model Order {
+  id                Int      @id @default(autoincrement())
+  orderNo           String   @unique // ORD-20261108-001
+  buyerId           Int
+  buyer             User     @relation("BuyerOrders", fields: [buyerId], references: [id])
+  supplierId        Int
+  supplier          Supplier @relation("SupplierOrders", fields: [supplierId], references: [id])
+  channelType       String   // 'B2B_ORDER', 'B2B_RFQ', 'B2C_RETAIL'
+  orderStatus       String   // 'DEPOSITED', 'PREPARING', 'SHIPPED', 'SETTLED'
+  totalEstimatedAmt Int      // 선결제 예치 금액
+  totalFinalAmt     Int?     // 계량 실중량 확정 정산 금액
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  items             OrderItem[]
+  weightSettlement  B2bWeightSettlement?
+  payment           Payment?
+  taxInvoice        TaxInvoice?
+  shipment          Shipment?
+}
+
+// 10. Order Items
+model OrderItem {
+  id           Int         @id @default(autoincrement())
+  orderId      Int
+  order        Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  specId       Int
+  spec         ProductSpec @relation(fields: [specId], references: [id])
+  boxQty       Int         // 주문 박스/팩 수량
+  unitPrice    Int         // 주문 시점 kg당 단가
+  estAmount    Int         // 예상 금액
+  finalAmount  Int?        // 확정 금액
+}
+
+// 11. B2B Weight Settlement (근량 실계량 차액 정산 원장)
+model B2bWeightSettlement {
+  id                 Int       @id @default(autoincrement())
+  orderId            Int       @unique
+  order              Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  boxSerialNo        String    // 출고 박스 시리얼
+  actualWeightKg     Float     // 출고 실중량 (kg)
+  weightDiffKg       Float     // 실중량 - 기준중량
+  diffAmount         Int       // 차액 정산금 (+추가청구 / -환불)
+  scaleTicketImgUrl  String?   // 공인 계량표 사진 URL
+  adminApprovedAt    DateTime? // 관리자 정산 승인 일시
+  settledAt          DateTime?
+}
+
+// 12. Payment & Escrow
+model Payment {
+  id              Int      @id @default(autoincrement())
+  orderId         Int      @unique
+  order           Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  payMethod       String   // 'B2B_ESCROW', 'CREDIT_CARD', 'ACCOUNT_TRANSFER', 'EASY_PAY'
+  escrowStatus    String   // 'HELD', 'RELEASED', 'REFUNDED'
+  depositAmount   Int      // 최초 예치금
+  finalPaidAmount Int?     // 최종 반영 결제액
+  createdAt       DateTime @default(now())
+}
+
+// 13. Tax Invoices
+model TaxInvoice {
+  id             Int      @id @default(autoincrement())
+  orderId        Int      @unique
+  order          Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  docType        String   // 'TAX_INVOICE_B2B', 'CASH_RECEIPT_B2C', 'CARD_RECEIPT'
+  ntsIssueStatus String   @default("READY") // 'READY', 'NTS_SENT', 'FAILED'
+  ntsApprovalNum String?  // 국세청 승인번호
+  issuedAt       DateTime?
+}
+
+// 14. RFQ Requests
+model RfqRequest {
+  id                    Int           @id @default(autoincrement())
+  buyerId               Int
+  buyer                 BusinessBuyer @relation(fields: [buyerId], references: [id], onDelete: Cascade)
+  categoryCode          String        // 희망 축종/부위
+  targetBoxQty          Int           // 희망 수량 (박스/kg)
+  targetPricePerKg      Int           // 점주 희망 단가 (원/kg)
+  preferredDeliveryDate DateTime      // 납품 희망일
+  deliveryAddress       String?
+  cutSpec               String?       // 세절 규격
+  auditStatus           String        @default("PENDING") // 'PENDING', 'APPROVED', 'REJECTED'
+  createdAt             DateTime      @default(now())
+
+  proposals             RfqProposal[]
+}
+
+// 15. RFQ Proposals
+model RfqProposal {
+  id                 Int        @id @default(autoincrement())
+  rfqId              Int
+  rfq                RfqRequest @relation(fields: [rfqId], references: [id], onDelete: Cascade)
+  supplierId         Int
+  supplier           Supplier   @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  proposalPricePerKg Int        // 공급자 제안 단가 (원/kg)
+  packagingType      String     // 진공포장 / 스킨포장 / 박스
+  deliveryAvailableDate DateTime
+  status             String     @default("PROPOSED") // 'PROPOSED', 'ACCEPTED', 'REJECTED'
+  createdAt          DateTime   @default(now())
+}
+
+// 16. Shipment & Logistics
+model Shipment {
+  id                Int      @id @default(autoincrement())
+  orderId           Int      @unique
+  order             Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  shipmentType      String   // 'COLD_TRUCK_DIRECT', 'BWT_WAREHOUSE_TRANSFER', 'B2C_EXPRESS_COURIER'
+  vehicleNumber     String?  // 냉동탑차 차량번호 및 기사 연락처
+  bwtWarehouseName  String?  // BWT 보세/수도권 냉동창고명
+  bwtDocumentUrl    String?  // BWT 명의이전 요청서 파일
+  trackingNumber    String?
+  shippedAt         DateTime?
+  deliveredAt       DateTime?
+}
+
+// 17. External Receipts (OCR 내 고기 경제실)
+model ExternalReceipt {
+  id              Int           @id @default(autoincrement())
+  buyerId         Int
+  buyer           BusinessBuyer @relation(fields: [buyerId], references: [id], onDelete: Cascade)
+  vendorName      String        // 타 거래처 상호명
+  itemName        String        // 품목명 (OCR 추출)
+  unitPricePerKg  Int           // 매입 kg당 단가
+  dataSourceTag   String        @default("EXTERNAL_OCR") // 'EXTERNAL_OCR'
+  receiptImgUrl   String?
+  purchaseDate    DateTime      @default(now())
+}
+
+// 18. Market Price History (축평원 시세 모니터링)
+model MarketPriceHistory {
+  id                  Int      @id @default(autoincrement())
+  categoryCode        String
+  ekapeMarketAvgPrice Int      // 축평원 전국 도매시장 평균가
+  optimalMatchPrice   Int      // 사피에넷 최적 매칭가
+  recordedDate        DateTime @default(now())
+}
+
+// 19. Co-Creation Ideas (V2 신상품 아이디어)
+model CoCreationIdea {
+  id          Int      @id @default(autoincrement())
+  proposerId  Int
+  proposer    User     @relation(fields: [proposerId], references: [id])
+  ideaTitle   String
+  description String?
+  status      String   @default("REVIEWING") // 'REVIEWING', 'IN_DEV', 'COMMERCIALIZED'
+  createdAt   DateTime @default(now())
+
+  contract    ProductizationContract?
+}
+
+// 20. Productization Contracts (V3 권리·보상 계약)
+model ProductizationContract {
+  id               Int            @id @default(autoincrement())
+  ideaId           Int            @unique
+  idea             CoCreationIdea @relation(fields: [ideaId], references: [id], onDelete: Cascade)
+  contractPdfUrl   String?
+  rewardRatePct    Float          // 정율 보상 비율 (%)
+  settledRewardAmt Int            @default(0)
+  createdAt        DateTime       @default(now())
+}
+
+// 21. Delegated Order Rules (V3 위임구매)
+model DelegatedOrderRule {
+  id                  Int           @id @default(autoincrement())
+  buyerId             Int
+  buyer               BusinessBuyer @relation(fields: [buyerId], references: [id], onDelete: Cascade)
+  targetProductId     Int
+  product             Product       @relation(fields: [targetProductId], references: [id])
+  triggerMaxPrice     Int           // kg당 목표 상한 단가
+  autoOrderQty        Int           // 자동 발주 수량
+  requireKakaoApproval Boolean       @default(true)
+  isActive            Boolean       @default(true)
+  createdAt           DateTime      @default(now())
+}
+
+// 22. Retail Pack Product (소매점주 수제/소분 팩 상품)
+model RetailPackProduct {
+  id                   Int           @id @default(autoincrement())
+  businessBuyerId      Int
+  businessBuyer        BusinessBuyer @relation(fields: [businessBuyerId], references: [id], onDelete: Cascade)
+  sourceOrderId        Int?          // 원천 발주 건 ID
+  sourceTraceNumber    String        // 계승된 축산물이력추적번호
+  sourceSlaughterHouse String?       // 원 도축장명
+  categoryCode         String        // 'PORK', 'BEEF'
+  packName             String        // 예: [하남돼지집] 비법 칼집 생삼겹살 500g
+  chefNote             String?       // 셰프 가공 설명 (예: 2cm 두툼 컷팅 & 300번 칼집)
+  portionWeightG       Int           // 포장 중량 (g)
+  salePrice            Int           // 판매가
+  stockQty             Int           @default(10) // 잔여 팩 수량
+  meatGrade            String?       // 예: 1+ 등급
+  imageUrl             String?       // 현장 모바일 WebP 촬영 사진
+  pickupAvailable      Boolean       @default(true) // 매장 방문 픽업 지원 여부
+  pickupDiscount       Int           @default(1000) // 픽업 시 할인 금액 (1,000원)
+  deliveryAvailable    Boolean       @default(true) // 새벽배송/택배 지원 여부
+  storeAddress         String?       // 픽업 매장 주소
+  status               String        @default("ACTIVE") // 'ACTIVE', 'SOLD_OUT', 'STOPPED'
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+}
