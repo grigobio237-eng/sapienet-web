@@ -23,7 +23,8 @@ export default function BuyerNav({ cartCount = 0 }: { cartCount?: number }) {
     { name: '대량/맞춤 조건요청 (RFQ)', href: '/buyer/rfq', icon: FileSpreadsheet },
     { name: '발주·세금계산서·경제실', href: '/buyer/history', icon: ReceiptText },
     { name: '셰프 수제 팩 판매', href: '/buyer/packs', icon: ChefHat },
-    { name: '환경설정', href: '/buyer/settings', icon: Settings },
+    { name: '고객지원(CS)·공지', href: '/cs', icon: Store },
+    { name: '환경설정/배송지', href: '/buyer/settings', icon: Settings },
   ];
 
   return (

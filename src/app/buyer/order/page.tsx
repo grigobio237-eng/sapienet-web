@@ -28,6 +28,15 @@ export default function BuyerOrderPage() {
   const [stepStorage, setStepStorage] = useState<string>('ALL'); // ALL, REFRIGERATED, FROZEN
   const [stepPriceRange, setStepPriceRange] = useState<string>('ALL'); // ALL, UNDER_20K, 20K_TO_50K, OVER_50K
 
+  const [searchKeyword, setSearchKeyword] = useState<string>('');
+  const [wishlistIds, setWishlistIds] = useState<number[]>([]);
+  const [reviewsMap, setReviewsMap] = useState<Record<number, any[]>>({});
+  const [modalTab, setModalTab] = useState<'SPEC' | 'REVIEW' | 'QNA'>('SPEC');
+  const [newReviewRating, setNewReviewRating] = useState(5);
+  const [newReviewContent, setNewReviewContent] = useState('');
+  const [newReviewTag, setNewReviewTag] = useState('육질 신선도 우수');
+  const [reviewSubmitted, setReviewSubmitted] = useState(false);
+
   // Detail Modal & Cart state
   const [selectedProduct, setSelectedProduct] = useState<any | null>(null);
   const [cart, setCart] = useState<{ spec: any; product: any; qty: number }[]>([]);
@@ -45,10 +54,92 @@ export default function BuyerOrderPage() {
         console.error(err);
         setLoading(false);
       });
+
+    // 찜 목록 로드
+    fetch('/api/wishlist?userId=1')
+      .then((res) => res.json())
+      .then((json) => {
+        if (json.success && json.data) {
+          setWishlistIds(json.data.map((item: any) => item.productId).filter(Boolean));
+        }
+      });
   }, []);
+
+  const toggleWishlist = async (productId: number) => {
+    try {
+      const res = await fetch('/api/wishlist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: 1, productId }),
+      });
+      const json = await res.json();
+      if (json.success) {
+        if (json.action === 'ADDED') {
+          setWishlistIds((prev) => [...prev, productId]);
+        } else {
+          setWishlistIds((prev) => prev.filter((id) => id !== productId));
+        }
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleOpenModal = (p: any, spec: any) => {
+    setSelectedProduct({ product: p, spec });
+    setModalTab('SPEC');
+    // 해당 상품 리뷰 불러오기
+    fetch(`/api/reviews?productId=${p.id}`)
+      .then((res) => res.json())
+      .then((json) => {
+        if (json.success) {
+          setReviewsMap((prev) => ({ ...prev, [p.id]: json.data }));
+        }
+      });
+  };
+
+  const handleAddReview = async (productId: number) => {
+    if (!newReviewContent.trim()) return;
+    try {
+      const res = await fetch('/api/reviews', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          productId,
+          userId: 1,
+          rating: newReviewRating,
+          content: newReviewContent,
+          meatTags: [newReviewTag],
+          isBusinessBuyer: true,
+        }),
+      });
+      const json = await res.json();
+      if (json.success) {
+        setReviewSubmitted(true);
+        setNewReviewContent('');
+        // 리뷰 다시 불러오기
+        fetch(`/api/reviews?productId=${productId}`)
+          .then((res) => res.json())
+          .then((j) => {
+            if (j.success) setReviewsMap((prev) => ({ ...prev, [productId]: j.data }));
+          });
+        setTimeout(() => setReviewSubmitted(false), 3000);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
 
   // Filter logic
   const filteredProducts = products.filter((p) => {
+    if (searchKeyword.trim()) {
+      const q = searchKeyword.toLowerCase();
+      const matchName = p.productName.toLowerCase().includes(q);
+      const matchBrand = p.brandName?.toLowerCase().includes(q) || false;
+      const matchOrigin = p.origin?.toLowerCase().includes(q) || false;
+      const matchTrace = p.traceability?.traceNumber.includes(q) || false;
+      if (!matchName && !matchBrand && !matchOrigin && !matchTrace) return false;
+    }
     if (stepStorage !== 'ALL' && p.storageType !== stepStorage) return false;
     if (stepPriceRange !== 'ALL') {
       const price = p.specs[0]?.basePricePerKg || 0;
@@ -121,6 +212,38 @@ export default function BuyerOrderPage() {
           <span className="text-xs text-slate-500 bg-white px-3 py-1.5 rounded-xl border border-slate-200">
             총 운영 규격: <strong>{products.length}종</strong>
           </span>
+        </div>
+
+        {/* 쿠팡형 지능형 검색창 & 찜 모아보기 안내 */}
+        <div className="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-3">
+          <div className="relative w-full sm:max-w-md">
+            <input
+              type="text"
+              value={searchKeyword}
+              onChange={(e) => setSearchKeyword(e.target.value)}
+              placeholder="품목명, 부위(삼겹살/등심), 브랜드, 이력번호 12자리 검색"
+              className="w-full pl-9 pr-8 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:border-red-600 focus:outline-hidden text-xs text-slate-800 placeholder-slate-400 font-medium"
+            />
+            <span className="absolute left-3 top-3 text-slate-400">🔍</span>
+            {searchKeyword && (
+              <button
+                onClick={() => setSearchKeyword('')}
+                className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 text-xs"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2 w-full sm:w-auto justify-end text-xs text-slate-600">
+            <span className="font-semibold text-slate-700">
+              ❤️ 찜한 규격: <strong className="text-red-700">{wishlistIds.length}개</strong>
+            </span>
+            <span className="text-slate-300">|</span>
+            <span className="text-[11px] text-slate-500">
+              검색결과: <strong className="text-slate-900">{filteredProducts.length}개</strong> 규격
+            </span>
+          </div>
         </div>
 
         {/* 2.1 스마트 3-Step 가이드 필터 */}
@@ -342,10 +465,21 @@ export default function BuyerOrderPage() {
                       </td>
                       <td className="py-3.5 px-4 text-right space-x-1.5 whitespace-nowrap">
                         <button
-                          onClick={() => setSelectedProduct({ product: p, spec })}
+                          onClick={() => toggleWishlist(p.id)}
+                          className={`p-1.5 rounded-lg border text-xs transition-colors ${
+                            wishlistIds.includes(p.id)
+                              ? 'bg-red-50 border-red-300 text-red-600'
+                              : 'bg-white border-slate-200 text-slate-400 hover:text-red-500'
+                          }`}
+                          title={wishlistIds.includes(p.id) ? '찜 해제' : '관심규격 찜하기'}
+                        >
+                          {wishlistIds.includes(p.id) ? '❤️' : '🤍'}
+                        </button>
+                        <button
+                          onClick={() => handleOpenModal(p, spec)}
                           className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold"
                         >
-                          상세 스펙
+                          상세/리뷰
                         </button>
                         <button
                           onClick={() => addToCart(p, spec)}
@@ -433,43 +567,169 @@ export default function BuyerOrderPage() {
                 </p>
               </div>
 
-              {/* 스펙 태그 바 */}
-              {selectedProduct.product.traceability && (
-                <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200 text-xs space-y-2">
-                  <div className="flex justify-between items-center pb-2 border-b border-slate-200">
-                    <span className="text-slate-500">축산물 이력추적번호:</span>
-                    <strong className="font-mono text-red-700 text-sm">
-                      {selectedProduct.product.traceability.traceNumber}
-                    </strong>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">육질/육량 등급:</span>
-                    <strong className="text-slate-900">
-                      {selectedProduct.product.traceability.bmsGrade}
-                    </strong>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">도축일자:</span>
-                    <strong className="text-slate-900">2026.11.03 (도드람안성공판장)</strong>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">축평원 판정서 연동:</span>
-                    <span className="text-emerald-700 font-bold flex items-center gap-1">
-                      <CheckCircle2 size={13} /> 공식 판정서 확인 완료
-                    </span>
+              {/* 모달 상단 탭 (스펙 / 점주리뷰 / Q&A) */}
+              <div className="flex border-b border-slate-200 text-xs font-bold gap-4 pb-2">
+                <button
+                  onClick={() => setModalTab('SPEC')}
+                  className={`pb-1 border-b-2 transition-colors ${
+                    modalTab === 'SPEC' ? 'border-red-600 text-red-700' : 'border-transparent text-slate-400'
+                  }`}
+                >
+                  축산물 스펙
+                </button>
+                <button
+                  onClick={() => setModalTab('REVIEW')}
+                  className={`pb-1 border-b-2 transition-colors ${
+                    modalTab === 'REVIEW' ? 'border-red-600 text-red-700' : 'border-transparent text-slate-400'
+                  }`}
+                >
+                  점주 실구매 리뷰 ({reviewsMap[selectedProduct.product.id]?.length || 0})
+                </button>
+              </div>
+
+              {/* 탭 1: 스펙 태그 바 */}
+              {modalTab === 'SPEC' && (
+                <div className="space-y-4">
+                  {selectedProduct.product.traceability && (
+                    <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200 text-xs space-y-2">
+                      <div className="flex justify-between items-center pb-2 border-b border-slate-200">
+                        <span className="text-slate-500">축산물 이력추적번호:</span>
+                        <strong className="font-mono text-red-700 text-sm">
+                          {selectedProduct.product.traceability.traceNumber}
+                        </strong>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">육질/육량 등급:</span>
+                        <strong className="text-slate-900">
+                          {selectedProduct.product.traceability.bmsGrade}
+                        </strong>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">도축일자:</span>
+                        <strong className="text-slate-900">2026.11.03 (도드람안성공판장)</strong>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">축평원 판정서 연동:</span>
+                        <span className="text-emerald-700 font-bold flex items-center gap-1">
+                          <CheckCircle2 size={13} /> 공식 판정서 확인 완료
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 근량 계량 정산 안내 (Master Intent 08조) */}
+                  <div className="bg-amber-50 rounded-2xl p-4 border border-amber-200/80 text-xs text-amber-900 space-y-1.5">
+                    <p className="font-bold flex items-center gap-1.5 text-amber-800">
+                      <Info size={15} /> 근량 계량 차액 정산 안내
+                    </p>
+                    <p className="text-[11px] leading-relaxed">
+                      본 상품은 원박스(약 {selectedProduct.spec.stdWeightKg}kg) 단위로 판매되며, 출고 시 도축/가공 공급자의 실제 계량 중량에 따라 최종 결제 금액이 자동 정산(차액 환불 또는 추가 결제)됩니다. 공인 계량표 사진이 출고 시 투명하게 첨부됩니다.
+                    </p>
                   </div>
                 </div>
               )}
 
-              {/* 근량 계량 정산 안내 (Master Intent 08조) */}
-              <div className="bg-amber-50 rounded-2xl p-4 border border-amber-200/80 text-xs text-amber-900 space-y-1.5">
-                <p className="font-bold flex items-center gap-1.5 text-amber-800">
-                  <Info size={15} /> 근량 계량 차액 정산 안내
-                </p>
-                <p className="text-[11px] leading-relaxed">
-                  본 상품은 원박스(약 {selectedProduct.spec.stdWeightKg}kg) 단위로 판매되며, 출고 시 도축/가공 공급자의 실제 계량 중량에 따라 최종 결제 금액이 자동 정산(차액 환불 또는 추가 결제)됩니다. 공인 계량표 사진이 출고 시 투명하게 첨부됩니다.
-                </p>
-              </div>
+              {/* 탭 2: 점주 실구매 리뷰 */}
+              {modalTab === 'REVIEW' && (
+                <div className="space-y-4 max-h-80 overflow-y-auto pr-1 text-xs">
+                  {/* 리뷰 작성 박스 */}
+                  <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-slate-800">식당 점주 실구매 평가 남기기</span>
+                      <div className="flex items-center gap-1 text-amber-500 text-sm">
+                        {[1, 2, 3, 4, 5].map((s) => (
+                          <button
+                            key={s}
+                            type="button"
+                            onClick={() => setNewReviewRating(s)}
+                            className="cursor-pointer"
+                          >
+                            {s <= newReviewRating ? '★' : '☆'}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-1">
+                      {['육질 신선도 우수', '로스율 적음', '진공포장 양호', '지방 정선 적정'].map((tag) => (
+                        <button
+                          key={tag}
+                          type="button"
+                          onClick={() => setNewReviewTag(tag)}
+                          className={`text-[10px] px-2 py-0.5 rounded-full border transition-all ${
+                            newReviewTag === tag
+                              ? 'bg-red-700 text-white border-red-700 font-bold'
+                              : 'bg-white text-slate-600 border-slate-200'
+                          }`}
+                        >
+                          {tag}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={newReviewContent}
+                        onChange={(e) => setNewReviewContent(e.target.value)}
+                        placeholder="매장 사용 후기를 한 줄로 남겨주세요 (예: 삼겹 로스율 4% 미만 만족)"
+                        className="flex-1 px-3 py-1.5 rounded-xl border border-slate-200 bg-white text-xs text-slate-800 placeholder-slate-400"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleAddReview(selectedProduct.product.id)}
+                        className="px-3 py-1.5 bg-red-700 text-white rounded-xl text-xs font-bold hover:bg-red-600 whitespace-nowrap"
+                      >
+                        등록
+                      </button>
+                    </div>
+
+                    {reviewSubmitted && (
+                      <p className="text-[11px] text-emerald-600 font-bold">
+                        ✓ 점주 인증 리뷰가 등록되었습니다.
+                      </p>
+                    )}
+                  </div>
+
+                  {/* 리뷰 목록 */}
+                  <div className="space-y-2.5">
+                    {reviewsMap[selectedProduct.product.id]?.length === 0 ? (
+                      <p className="text-slate-400 text-center py-6 text-xs">
+                        아직 등록된 점주 리뷰가 없습니다. 첫 구매 후기를 남겨보세요!
+                      </p>
+                    ) : (
+                      reviewsMap[selectedProduct.product.id]?.map((rev: any) => (
+                        <div
+                          key={rev.id}
+                          className="bg-white p-3 rounded-xl border border-slate-200 space-y-1.5 shadow-2xs"
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-bold text-slate-800">
+                                {rev.user?.businessBuyer?.companyName || '인증 점주'}
+                              </span>
+                              <span className="bg-red-50 text-red-700 text-[10px] px-1.5 py-0.2 rounded font-bold">
+                                {rev.reorderCount}회차 재발주
+                              </span>
+                            </div>
+                            <span className="text-amber-500 font-bold">
+                              {'★'.repeat(rev.rating)}
+                            </span>
+                          </div>
+                          <p className="text-slate-700 text-xs leading-relaxed">{rev.content}</p>
+                          {rev.meatTags && (
+                            <div className="flex gap-1 text-[10px] text-slate-500">
+                              <span className="bg-slate-100 px-1.5 py-0.5 rounded">
+                                #{JSON.parse(rev.meatTags)[0]}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
 
               <div className="flex justify-end gap-2 pt-2">
                 <button

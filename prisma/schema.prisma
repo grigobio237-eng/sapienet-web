@@ -23,6 +23,11 @@ model User {
   retailBuyer   RetailBuyer?
   orders        Order[]       @relation("BuyerOrders")
   ideas         CoCreationIdea[]
+  reviews       ProductReview[]
+  inquiries     ProductInquiry[]
+  addresses     UserAddress[]
+  wishlists     Wishlist[]
+  userCoupons   UserCoupon[]
 }
 
 // 2. Business Buyer (식당 점주)
@@ -96,6 +101,10 @@ model Product {
   traceability       MeatTraceability?
   inventory          Inventory?
   delegatedRules     DelegatedOrderRule[]
+  reviews            ProductReview[]
+  inquiries          ProductInquiry[]
+  wishlists          Wishlist[]
+  timeSales          TimeSale[]
 }
 
 // 6. Product Specs (원박스/세절/소포장 규격)
@@ -156,6 +165,7 @@ model Order {
   payment           Payment?
   taxInvoice        TaxInvoice?
   shipment          Shipment?
+  reviews           ProductReview[]
 }
 
 // 10. Order Items
@@ -336,4 +346,150 @@ model RetailPackProduct {
   status               String        @default("ACTIVE") // 'ACTIVE', 'SOLD_OUT', 'STOPPED'
   createdAt            DateTime      @default(now())
   updatedAt            DateTime      @updatedAt
+
+  reviews              ProductReview[]
+  inquiries            ProductInquiry[]
+  wishlists            Wishlist[]
+  timeSales            TimeSale[]
 }
+
+// ==========================================
+// 23. 신뢰 평가 시스템 (Review & Rating)
+// ==========================================
+model ProductReview {
+  id              Int           @id @default(autoincrement())
+  productId       Int?          // B2B 원물 상품 ID
+  product         Product?      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  retailPackId    Int?          // B2C 소분/셰프팩 ID
+  retailPack      RetailPackProduct? @relation(fields: [retailPackId], references: [id], onDelete: Cascade)
+  orderId         Int           // 실제 구매 검증용
+  order           Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  userId          Int           // 작성자
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rating          Int           // 1 ~ 5점
+  title           String?       // 한줄 요약
+  content         String        // 리뷰 상세
+  photoUrls       String?       // JSON 문자열 배열 (사진 WebP)
+  meatTags        String?       // ["FRESH_MEAT", "GOOD_FAT_RATIO", "LOW_LOSS", "PERFECT_VACUUM"]
+  isBusinessBuyer Boolean       @default(false) // 식당 점주 인증 리뷰 여부
+  reorderCount    Int           @default(1)     // 점주의 재주문 횟수 (소셜 프루프)
+  likesCount      Int           @default(0)     // 도움돼요 수
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+}
+
+// ==========================================
+// 24. 고객 소통 & 게시판 (Notice, FAQ, Q&A)
+// ==========================================
+model Notice {
+  id          Int      @id @default(autoincrement())
+  category    String   // 'ALL', 'SHIPPING', 'PRICE_TREND', 'SYSTEM'
+  title       String
+  content     String   // 마크다운/텍스트 지원
+  isPinned    Boolean  @default(false) // 상단 고정 여부
+  bannerUrl   String?  // 메인 띠배너용 이미지/링크
+  viewCount   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model FaqItem {
+  id          Int      @id @default(autoincrement())
+  category    String   // 'JOIN_VERIFY', 'PAY_SETTLE', 'DELIVERY', 'CLAIM_REFUND'
+  question    String
+  answer      String
+  sortOrder   Int      @default(0)
+  isActive    Boolean  @default(true)
+}
+
+model ProductInquiry {
+  id           Int                @id @default(autoincrement())
+  productId    Int?
+  product      Product?           @relation(fields: [productId], references: [id], onDelete: Cascade)
+  retailPackId Int?
+  retailPack   RetailPackProduct? @relation(fields: [retailPackId], references: [id], onDelete: Cascade)
+  userId       Int
+  user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  isSecret     Boolean            @default(false) // 비밀글 여부
+  question     String
+  answer       String?            // 공급자 또는 관리자 답변
+  answeredAt   DateTime?
+  status       String             @default("WAITING") // 'WAITING', 'ANSWERED'
+  createdAt    DateTime           @default(now())
+}
+
+// ==========================================
+// 25. 편의 및 개인화 (Address, Wishlist)
+// ==========================================
+model UserAddress {
+  id              Int      @id @default(autoincrement())
+  userId          Int
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  addressName     String   // '본점 매장', '직영 2호점', '자택'
+  receiverName    String
+  phoneNumber     String
+  zonecode        String   // 우편번호
+  address         String   // 기본주소
+  detailAddress   String   // 상세주소
+  isDefault       Boolean  @default(false)
+  deliveryMemo    String?  // '주방 뒤편 냉동고 앞 보관', '공동현관 비번: #1234'
+  createdAt       DateTime @default(now())
+}
+
+model Wishlist {
+  id           Int                @id @default(autoincrement())
+  userId       Int
+  user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  productId    Int?
+  product      Product?           @relation(fields: [productId], references: [id], onDelete: Cascade)
+  retailPackId Int?
+  retailPack   RetailPackProduct? @relation(fields: [retailPackId], references: [id], onDelete: Cascade)
+  createdAt    DateTime           @default(now())
+
+  @@unique([userId, productId])
+  @@unique([userId, retailPackId])
+}
+
+// ==========================================
+// 26. 프로모션 & 리텐션 (TimeSale, Coupon)
+// ==========================================
+model TimeSale {
+  id             Int                @id @default(autoincrement())
+  productId      Int?
+  product        Product?           @relation(fields: [productId], references: [id], onDelete: Cascade)
+  retailPackId   Int?
+  retailPack     RetailPackProduct? @relation(fields: [retailPackId], references: [id], onDelete: Cascade)
+  discountRate   Int                // 할인율 (%)
+  salePrice      Int                // 세일 적용가
+  limitedStock   Int                // 한정 수량
+  soldStock      Int                @default(0)
+  startAt        DateTime
+  endAt          DateTime
+  isActive       Boolean            @default(true)
+}
+
+model Coupon {
+  id             Int          @id @default(autoincrement())
+  code           String       @unique
+  name           String       // '첫 발주 웰컴 1만원 할인쿠폰'
+  discountAmount Int?         // 정액 할인
+  discountRate   Int?         // 정률 할인 (%)
+  minOrderAmount Int          @default(0)
+  maxDiscount    Int?
+  validDays      Int          @default(30)
+  createdAt      DateTime     @default(now())
+  userCoupons    UserCoupon[]
+}
+
+model UserCoupon {
+  id             Int      @id @default(autoincrement())
+  userId         Int
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  couponId       Int
+  coupon         Coupon   @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  isUsed         Boolean  @default(false)
+  usedAt         DateTime?
+  expireAt       DateTime
+  createdAt      DateTime @default(now())
+}
+
